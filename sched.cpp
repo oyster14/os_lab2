@@ -3,13 +3,34 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <list>
 #include <queue>
+#include <stack>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace std;
 
-typedef enum { STATE_RUNNING, STATE_BLOCKED } process_state_t;
+bool vflag = false;  // verbose
+bool tflag = false;
+bool eflag = false;
+bool pflag = false;
+bool iflag = false;
+
+typedef enum { CREATED, READY, RUNNG, PREEMPT, BLOCKED, DONE } process_state;
+const static char* state_str[] = {"CREATED", "READY", "RUNNG",
+                                  "PREEMPT", "BLOCK", "DONE"};
+
+const static unordered_map<char, string> shed_name = {
+    {'F', "FCFS"}, {'L', "LCFS"}, {'S', "SRTF"},
+    {'R', "RR"},   {'P', "PRIO"}, {'E', "PREPRIO"}};
+
+int CURRENT_TIME = 0;
+bool CALL_SCHEDULER = false;
+int maxprio = 4;
+int quantum = 10000;
+char sched_type = 'F';
 
 // --- begin --- randvals ---
 
@@ -25,16 +46,16 @@ void init_randvals(string& rfile_name) {
         cout << "Unable to open rand_file." << endl;
         exit(1);
     }
-    string line;
+    int num;
     int pos = 0;
     bool is_first = true;
-    while (getline(rfile, line)) {
+    while (rfile >> num) {
         if (is_first == true) {
             is_first = false;
-            ofs_size = stoi(line);
+            ofs_size = num;
             randvals.resize(ofs_size);
         } else {
-            randvals[pos++] = stoi(line);
+            randvals[pos++] = num;
         }
     }
     rfile.close();
@@ -49,90 +70,474 @@ int myrandom(int burst) {
 
 // --- end --- randvals ---
 
+// --- begin --- process ---
+
+int pid_num = 0;
+
 class Process {
    public:
-    Process(int AT, int TC, int CB, int IO, int PRIO)
-        : AT(AT), TC(TC), CB(CB), IO(IO), PRIO(PRIO) {}
+    Process(int pid, int at, int tc, int cb, int io)
+        : pid(pid), at(at), tc(tc), cb(cb), io(io) {
+        static_prio = myrandom(maxprio);
+        dynamic_prio = static_prio - 1;
+        rem_time = tc;
+        state_ts = at;
+    }
 
-   private:
-    int AT;
-    int TC;
-    int CB;
-    int IO;
-    int PRIO;
-    int quantum = 10000;
+    int pid;
+    int at;
+    int tc;
+    int cb;
+    int io;
+
+    int static_prio;
+    int dynamic_prio;
+
+    int cpu_burst = 0;
+    int io_burst = 0;
+    int rem_time;
+    int state_ts;
+
+    int ft = 0;
+    int tt = 0;
+    int it = 0;
+    int cw = 0;
+
+    void get_cpu_burst() {
+        cpu_burst = myrandom(cb);
+        if (cpu_burst > rem_time) {
+            cpu_burst = rem_time;
+        }
+    }
+
+    void get_io_burst() {
+        io_burst = myrandom(io);
+        it += io_burst;  // seems to need revise
+    }
+
+    void update_rem() { rem_time -= cpu_burst; }
+
+    void update_state_ts(int val) { state_ts = val; }
+
+    void set_ft_tt(int val) {
+        ft = val;
+        tt = ft - at;
+    }
+
+    void update_dynamic_prio() { dynamic_prio--; }
+
+    void reset_dynamic_prio() {
+        dynamic_prio = static_prio - 1;
+    }  // When a process returns from I/O
+
+    bool is_next_done() { return rem_time == cpu_burst; }
 };
+
+Process* CURRENT_RUNNING_PROCESS = nullptr;
+
+vector<Process*> process_order;
+
+// --- end --- process ---
+
+// --- begin --- DES ---
 
 class Event {
    public:
-    Event() {}
+    Event(int evtTimeStamp, Process* evtProcess)
+        : evtTimeStamp(evtTimeStamp), evtProcess(evtProcess) {}
 
+    Event(int evtTimeStamp, Process* evtProcess, process_state oldState,
+          process_state newState)
+        : evtTimeStamp(evtTimeStamp),
+          evtProcess(evtProcess),
+          oldState(oldState),
+          newState(newState) {}
+
+    int evtTimeStamp;
     Process* evtProcess;
+    process_state oldState = CREATED;
+    process_state newState = READY;
 };
 
-// class Scheduler {
-//    public:
-//     Scheduler() {}
-//     void add_process(Process* p);
-//     Process* get_next_process();
-//     bool does_preempt();
-// };
+list<Event*> eventsQ;
 
-class DES {};
+void init_events(string& ifile_name) {
+    ifstream ifile;
+    ifile.open(ifile_name);
+    if (!ifile.is_open()) {
+        cout << "Unable to open input_file." << endl;
+        exit(1);
+    }
+    int at, tc, cb, io;
+    while (ifile >> at >> tc >> cb >> io) {
+        Process* process = new Process(pid_num++, at, tc, cb, io);
+        process_order.emplace_back(process);
+        Event* event = new Event(at, process);
+        eventsQ.emplace_back(event);
+    }
+    ifile.close();
+};
 
-// void Simulation() {
-//     EVENT* evt;
-//     while ((evt = get_event())) {
-//         Process* proc =
-//             evt->evtProcess;  // this is the process the event works on
-//         CURRENT_TIME = evt->evtTimeStamp;
-//         int transition = evt->transition;
-//         int timeInPrevState = CURRENT_TIME – proc->state_ts;  // for
-//         accounting delete evt; evt = nullptr;         // remove cur event obj
-//         and don’t touch anymore switch (transition) {  // encodes where we
-//         come from and where we go
-//             case TRANS_TO_READY:
-//                 // must come from BLOCKED or CREATED
-//                 // add to run queue, no event created
-//                 CALL_SCHEDULER = true;
-//                 break;
-//             case TRANS_TO_PREEMPT:  // similar to TRANS_TO_READY
-//                 // must come from RUNNING (preemption)
-//                 // add to runqueue (no event is generated)
-//                 CALL_SCHEDULER = true;
-//                 break;
-//             case TRANS_TO_RUN:
-//                 // create event for either preemption or blocking
-//                 break;
-//             case TRANS_TO_BLOCK:
-//                 // create an event for when process becomes READY again
-//                 CALL_SCHEDULER = true;
-//                 break;
-//         }
-//         if (CALL_SCHEDULER) {
-//             if (get_next_event_time() == CURRENT_TIME) {
-//                 continue;  // process next event from Event queue
-//             }
-//             CALL_SCHEDULER = false;  // reset global flag
-//             if (CURRENT_RUNNING_PROCESS == nullptr) {
-//                 CURRENT_RUNNING_PROCESS = THE_SCHEDULER->get_next_process();
-//                 if (CURRENT_RUNNING_PROCESS == nullptr) continue;
-//                 // create event to make this process runnable for same time.
-//             }
-//         }
-//     }
-// }
+void showEventQ() {
+    cout << "ShowEventQ: ";
+    list<Event*>::iterator it;
+    for (it = eventsQ.begin(); it != eventsQ.end(); it++) {
+        cout << (*it)->evtTimeStamp << ":" << (*it)->evtProcess->pid << " ";
+    }
+    cout << endl;
+};
+
+Event* get_event() {
+    if (eventsQ.empty()) {
+        return nullptr;
+    }
+    Event* evt = eventsQ.front();
+    eventsQ.pop_front();
+    return evt;
+};
+
+void put_event(Event* evt) {
+    list<Event*>::iterator it = eventsQ.begin();
+    while (it != eventsQ.end() && evt->evtTimeStamp >= (*it)->evtTimeStamp) {
+        it++;
+    }
+    eventsQ.insert(it, evt);
+};
+
+int get_next_event_time() {
+    if (eventsQ.empty()) {
+        return -1;
+    }
+    return eventsQ.front()->evtTimeStamp;
+};
+
+void rm_event(){
+
+};
+
+// --- end --- DES ---
+
+// --- begin --- scheduler ---
+
+class Scheduler {
+   public:
+    virtual void add_process(Process* p) = 0;
+
+    virtual Process* get_next_process() = 0;
+
+    virtual bool does_preempt() = 0;
+};
+
+class FCFS : public Scheduler {
+   public:
+    void add_process(Process* p) { runqueue.emplace(p); };
+
+    Process* get_next_process() {
+        if (runqueue.empty()) {
+            return nullptr;
+        }
+        Process* proc = runqueue.front();
+        runqueue.pop();
+        return proc;
+    };
+
+    bool does_preempt() { return sched_type == 'E'; };
+
+   private:
+    queue<Process*> runqueue;
+};
+
+class LCFS : public Scheduler {
+   public:
+    void add_process(Process* p) { runqueue.emplace(p); };
+
+    Process* get_next_process() {
+        if (runqueue.empty()) {
+            return nullptr;
+        }
+        Process* proc = runqueue.top();
+        runqueue.pop();
+        return proc;
+    };
+
+    bool does_preempt() { return sched_type == 'E'; };
+
+   private:
+    stack<Process*> runqueue;
+};
+
+class SRTF : public Scheduler {
+   public:
+    void add_process(Process* p) {
+        it = runqueue.begin();
+        while (it != runqueue.end() && p->rem_time >= (*it)->rem_time) {
+            it++;
+        }
+        runqueue.insert(it, p);
+    };
+
+    Process* get_next_process() {
+        if (runqueue.empty()) {
+            return nullptr;
+        }
+        Process* proc = runqueue.front();
+        runqueue.pop_front();
+        return proc;
+    };
+
+    bool does_preempt() { return sched_type == 'E'; };
+
+   private:
+    list<Process*> runqueue;
+    list<Process*>::iterator it;
+};
+
+class RR : public Scheduler {
+   public:
+    void add_process(Process* p) { runqueue.emplace(p); };
+
+    Process* get_next_process() {
+        if (runqueue.empty()) {
+            return nullptr;
+        }
+        Process* proc = runqueue.front();
+        runqueue.pop();
+        return proc;
+    };
+
+    bool does_preempt() { return sched_type == 'E'; };
+
+   private:
+    queue<Process*> runqueue;
+};
+
+class PRIO : public Scheduler {
+   public:
+    void add_process(Process* p) { runqueue.emplace(p); };
+
+    Process* get_next_process() {
+        if (runqueue.empty()) {
+            return nullptr;
+        }
+        Process* proc = runqueue.front();
+        runqueue.pop();
+        return proc;
+    };
+
+    bool does_preempt() { return sched_type == 'E'; };
+
+   private:
+    queue<Process*> runqueue;
+};
+
+class PREPRIO : public Scheduler {
+   public:
+    PREPRIO() {
+        activeQ = new queue<Process*>[maxprio];
+        expiredQ = new queue<Process*>[maxprio];
+    }
+
+    ~PREPRIO() {
+        delete activeQ;
+        activeQ = nullptr;
+        delete expiredQ;
+        expiredQ = nullptr;
+    }
+
+    void add_process(Process* p) {
+        // need to change
+        if (p->dynamic_prio < 0) {
+            p->reset_dynamic_prio();
+            expiredQ[p->dynamic_prio].emplace(p);
+        } else {
+            activeQ[p->dynamic_prio].emplace(p);
+        }
+    };
+
+    Process* get_next_process() {
+        // need to change
+        if (activeQ[0].empty()) {
+            swap(activeQ, expiredQ);
+        }
+        Process* proc = activeQ[maxprio - 1].front();
+        activeQ[maxprio - 1].pop();
+        return proc;
+    };
+
+    bool does_preempt() { return sched_type == 'E'; };
+
+   private:
+    queue<Process*>* activeQ;
+    queue<Process*>* expiredQ;
+};
+
+Scheduler* THE_SCHEDULER = nullptr;
+
+void init_scheduler() {
+    switch (sched_type) {
+        case 'F':
+            THE_SCHEDULER = new FCFS();
+            break;
+        case 'L':
+            THE_SCHEDULER = new LCFS();
+            break;
+        case 'S':
+            THE_SCHEDULER = new SRTF();
+            break;
+        case 'R':
+            THE_SCHEDULER = new RR();
+            break;
+        case 'P':
+            THE_SCHEDULER = new PRIO();
+            break;
+        case 'E':
+            THE_SCHEDULER = new PREPRIO();
+            break;
+        default:
+            cout << "Unknown Scheduler spec : -v { FLSRPE }" << endl;
+            exit(1);
+    }
+}
+
+void rm_scheduler() {
+    delete THE_SCHEDULER;
+    THE_SCHEDULER = nullptr;
+}
+
+// --- end --- scheduler ---
+
+void simulation() {
+    Event* evt;
+    while ((evt = get_event())) {
+        Process* proc = evt->evtProcess;
+        CURRENT_TIME = evt->evtTimeStamp;
+        process_state transition = evt->newState;
+        int timeInPrevState = CURRENT_TIME - proc->state_ts;
+        switch (transition) {
+            case READY: {
+                // must come from BLOCKED or CREATED
+                // add to runqueue (no event is generated)
+                THE_SCHEDULER->add_process(proc);
+                CALL_SCHEDULER = true;
+                proc->update_state_ts(proc->io_burst);
+                if (vflag == true) {
+                    printf("%d %d %d: %s -> %s\n", CURRENT_TIME, proc->pid,
+                           proc->state_ts, state_str[evt->oldState],
+                           state_str[evt->newState]);
+                    // 0 0 0 : CREATED->READY
+                }
+                break;
+            }
+            case PREEMPT: {
+                // add to runqueue (no event is generated)
+                THE_SCHEDULER->add_process(proc);
+                CALL_SCHEDULER = true;
+                break;
+            }
+            case RUNNG: {
+                // create event for either preemption or blocking
+                proc->get_cpu_burst();
+                CURRENT_RUNNING_PROCESS = proc;
+                Event* new_evt;
+                if (proc->is_next_done()) {
+                    new_evt = new Event(CURRENT_TIME + proc->cpu_burst, proc,
+                                        RUNNG, DONE);
+                } else {
+                    new_evt = new Event(CURRENT_TIME + proc->cpu_burst, proc,
+                                        RUNNG, BLOCKED);
+                }
+                put_event(new_evt);
+                if (vflag == true) {
+                    printf("%d %d %d: %s -> %s cb=%d rem=%d prio=%d\n",
+                           CURRENT_TIME, proc->pid, proc->state_ts,
+                           state_str[evt->oldState], state_str[evt->newState],
+                           proc->cpu_burst, proc->rem_time, proc->dynamic_prio);
+                    // 0 0 0: READY -> RUNNG cb=8 rem=100 prio=1
+                }
+                break;
+            }
+            case BLOCKED: {
+                // create an event for when process becomes READY again
+                proc->get_io_burst();
+                proc->update_rem();
+                proc->update_state_ts(proc->cpu_burst);
+                CURRENT_RUNNING_PROCESS = nullptr;
+                Event* new_evt = new Event(CURRENT_TIME + proc->io_burst, proc,
+                                           BLOCKED, READY);
+                put_event(new_evt);
+                CALL_SCHEDULER = true;
+                if (vflag == true) {
+                    printf("%d %d %d: %s -> %s  ib=%d rem=%d\n", CURRENT_TIME,
+                           proc->pid, proc->state_ts, state_str[evt->oldState],
+                           state_str[evt->newState], proc->io_burst,
+                           proc->rem_time);
+                    // 8 0 8: RUNNG -> BLOCK  ib=2 rem=92
+                }
+                break;
+            }
+            case DONE: {
+                proc->update_rem();
+                proc->update_state_ts(proc->cpu_burst);
+                proc->set_ft_tt(CURRENT_TIME);
+                CURRENT_RUNNING_PROCESS = nullptr;
+                CALL_SCHEDULER = true;
+                if (vflag == true) {
+                    printf("%d %d %d: Done\n", CURRENT_TIME, proc->pid,
+                           proc->state_ts);
+                    // 201 0 5: Done
+                }
+                break;
+            }
+        }
+        delete evt;
+        evt = nullptr;
+
+        if (CALL_SCHEDULER) {
+            if (get_next_event_time() == CURRENT_TIME) {
+                continue;  // process next event from Event queue
+            }
+            CALL_SCHEDULER = false;  // reset global flag
+            if (CURRENT_RUNNING_PROCESS == nullptr) {
+                CURRENT_RUNNING_PROCESS = THE_SCHEDULER->get_next_process();
+                if (CURRENT_RUNNING_PROCESS == nullptr) {
+                    continue;
+                }
+                // create event to make this process runnable for same time.
+                CURRENT_RUNNING_PROCESS->update_state_ts(0);
+                Event* new_event = new Event(
+                    CURRENT_TIME, CURRENT_RUNNING_PROCESS, READY, RUNNG);
+                put_event(new_event);
+            }
+        }
+    }
+}
+
+void summary() {
+    cout << shed_name.at(sched_type);
+    if (sched_type == 'R' || sched_type == 'P' || sched_type == 'E') {
+        cout << " " << quantum;
+    }
+    cout << endl;
+    int finishtime = 0;
+    for (Process* p : process_order) {
+        finishtime = max(finishtime, p->ft);
+        printf("%04d: %4d %4d %4d %4d %1d | %5d %5d %5d %5d\n", p->pid, p->at,
+               p->tc, p->cb, p->io, p->static_prio, p->ft, p->tt, p->it, p->cw);
+    }
+    int time_cpubusy, time_iobusy, num_processes;
+    double cpu_util = 100.0 * (time_cpubusy / (double)finishtime);
+    double io_util = 100.0 * (time_iobusy / (double)finishtime);
+    double throughput = 100.0 * (num_processes / (double)finishtime);
+    printf("SUM: %d %.2lf %.2lf %.2lf %.2lf %.3lf\n", finishtime, cpu_util,
+           io_util, 0.0, 0.0, throughput);
+}
 
 int main(int argc, char** argv) {
-    bool vflag = false;
-    bool tflag = false;
-    bool eflag = false;
-    bool pflag = false;
-    bool iflag = false;
-    string schedsped;
     int c;
 
     opterr = 0;
+
+    string sched_param;
 
     while ((c = getopt(argc, argv, "vtepis:")) != -1) {
         switch (c) {
@@ -152,7 +557,18 @@ int main(int argc, char** argv) {
                 iflag = true;
                 break;
             case 's':
-                schedsped = optarg;
+                sched_param = optarg;
+                sched_type = sched_param[0];
+                if (sched_type == 'R' || sched_type == 'P' ||
+                    sched_type == 'E') {
+                    if (sched_param.size() == 1) {
+                        cout << "Invalid scheduler param<" << sched_type << ">"
+                             << endl;
+                        exit(1);
+                    }
+                    sscanf(optarg, "%c%d:%d", &sched_type, &quantum, &maxprio);
+                    // other checks needed to be done
+                }
                 break;
             case '?':
                 if (optopt == 's')
@@ -179,7 +595,14 @@ int main(int argc, char** argv) {
     string ifile_name = argv[optind];
     string rfile_name = argv[optind + 1];
 
+    init_scheduler();
     init_randvals(rfile_name);
+    init_events(ifile_name);
+
+    simulation();
+
+    summary();
+    rm_scheduler();
 
     return 0;
 }
