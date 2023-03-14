@@ -1,7 +1,6 @@
 #include <unistd.h>
 
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <list>
 #include <queue>
@@ -32,6 +31,8 @@ int maxprio = 4;
 int quantum = 10000;
 char sched_type = 'F';
 
+// --- begin --- iobusy ---
+
 int time_iobusy = 0;
 int global_io_end_t = -1;
 void update_global_io(int start_t, int end_t) {
@@ -43,6 +44,8 @@ void update_global_io(int start_t, int end_t) {
         global_io_end_t = end_t;
     }
 };
+
+// --- end --- iobusy ---
 
 // --- begin --- randvals ---
 
@@ -116,9 +119,11 @@ class Process {
     int cw = 0;
 
     void get_cpu_burst() {
-        cpu_burst = myrandom(cb);
-        if (cpu_burst > rem_time) {
-            cpu_burst = rem_time;
+        if (cpu_burst == 0) {
+            cpu_burst = myrandom(cb);
+            if (cpu_burst > rem_time) {
+                cpu_burst = rem_time;
+            }
         }
     }
 
@@ -127,7 +132,9 @@ class Process {
         it += io_burst;  // seems to need revise
     }
 
-    void update_rem() { rem_time -= cpu_burst; }
+    void update_rem(int val) { rem_time -= val; }
+
+    void update_cpu_burst(int val) { cpu_burst -= val; }
 
     void update_cw(int val) { cw += val; }
 
@@ -239,7 +246,7 @@ class Scheduler {
 
     virtual Process* get_next_process() = 0;
 
-    virtual bool does_preempt() = 0;
+    bool does_preempt() { return sched_type == 'E'; };
 };
 
 class FCFS : public Scheduler {
@@ -254,8 +261,6 @@ class FCFS : public Scheduler {
         runqueue.pop();
         return proc;
     };
-
-    bool does_preempt() { return sched_type == 'E'; };
 
    private:
     queue<Process*> runqueue;
@@ -273,8 +278,6 @@ class LCFS : public Scheduler {
         runqueue.pop();
         return proc;
     };
-
-    bool does_preempt() { return sched_type == 'E'; };
 
    private:
     stack<Process*> runqueue;
@@ -299,8 +302,6 @@ class SRTF : public Scheduler {
         return proc;
     };
 
-    bool does_preempt() { return sched_type == 'E'; };
-
    private:
     list<Process*> runqueue;
     list<Process*>::iterator it;
@@ -319,8 +320,6 @@ class RR : public Scheduler {
         return proc;
     };
 
-    bool does_preempt() { return sched_type == 'E'; };
-
    private:
     queue<Process*> runqueue;
 };
@@ -337,8 +336,7 @@ class PRIO : public Scheduler {
         runqueue.pop();
         return proc;
     };
-
-    bool does_preempt() { return sched_type == 'E'; };
+    ;
 
    private:
     queue<Process*> runqueue;
@@ -377,8 +375,6 @@ class PREPRIO : public Scheduler {
         activeQ[maxprio - 1].pop();
         return proc;
     };
-
-    bool does_preempt() { return sched_type == 'E'; };
 
    private:
     queue<Process*>* activeQ;
@@ -443,23 +439,40 @@ void simulation() {
                 break;
             }
             case PREEMPT: {
+                // must come from RUNNING (preemption)
                 // add to runqueue (no event is generated)
+                CURRENT_RUNNING_PROCESS = nullptr;
+                proc->update_state_ts(CURRENT_TIME);
+                proc->update_cpu_burst(timeInPrevState);
+                proc->update_rem(timeInPrevState);
                 THE_SCHEDULER->add_process(proc);
                 CALL_SCHEDULER = true;
+                if (vflag == true) {
+                    printf("%d %d %d: %s -> %s  cb=%d rem=%d prio=%d\n",
+                           CURRENT_TIME, proc->pid, timeInPrevState,
+                           state_str[evt->oldState], state_str[READY],
+                           proc->cpu_burst, proc->rem_time, proc->dynamic_prio);
+                    // 2 0 2: RUNNG -> READY  cb=6 rem=98 prio=1
+                }
                 break;
             }
             case RUNNG: {
                 // create event for either preemption or blocking
-                proc->get_cpu_burst();
                 proc->update_state_ts(CURRENT_TIME);
                 CURRENT_RUNNING_PROCESS = proc;
+                proc->get_cpu_burst();
                 Event* new_evt;
-                if (proc->is_next_done()) {
-                    new_evt = new Event(CURRENT_TIME + proc->cpu_burst, proc,
-                                        RUNNG, DONE);
+                if (proc->cpu_burst <= quantum) {
+                    if (proc->is_next_done()) {
+                        new_evt = new Event(CURRENT_TIME + proc->cpu_burst,
+                                            proc, RUNNG, DONE);
+                    } else {
+                        new_evt = new Event(CURRENT_TIME + proc->cpu_burst,
+                                            proc, RUNNG, BLOCKED);
+                    }
                 } else {
-                    new_evt = new Event(CURRENT_TIME + proc->cpu_burst, proc,
-                                        RUNNG, BLOCKED);
+                    new_evt =
+                        new Event(CURRENT_TIME + quantum, proc, RUNNG, PREEMPT);
                 }
                 put_event(new_evt);
                 if (vflag == true) {
@@ -474,7 +487,8 @@ void simulation() {
             case BLOCKED: {
                 // create an event for when process becomes READY again
                 proc->get_io_burst();
-                proc->update_rem();
+                proc->update_cpu_burst(timeInPrevState);
+                proc->update_rem(timeInPrevState);
                 proc->update_state_ts(CURRENT_TIME);
                 update_global_io(CURRENT_TIME, CURRENT_TIME + proc->io_burst);
                 CURRENT_RUNNING_PROCESS = nullptr;
@@ -492,7 +506,8 @@ void simulation() {
                 break;
             }
             case DONE: {
-                proc->update_rem();
+                proc->update_rem(timeInPrevState);
+                proc->update_cpu_burst(timeInPrevState);
                 proc->update_state_ts(CURRENT_TIME);
                 proc->set_ft_tt(CURRENT_TIME);
                 CURRENT_RUNNING_PROCESS = nullptr;
