@@ -32,6 +32,18 @@ int maxprio = 4;
 int quantum = 10000;
 char sched_type = 'F';
 
+int time_iobusy = 0;
+int global_io_end_t = -1;
+void update_global_io(int start_t, int end_t) {
+    if (start_t >= global_io_end_t) {
+        time_iobusy += end_t - start_t;
+        global_io_end_t = end_t;
+    } else if (end_t > global_io_end_t) {
+        time_iobusy += end_t - global_io_end_t;
+        global_io_end_t = end_t;
+    }
+};
+
 // --- begin --- randvals ---
 
 int ofs = 0;
@@ -116,6 +128,8 @@ class Process {
     }
 
     void update_rem() { rem_time -= cpu_burst; }
+
+    void update_cw(int val) { cw += val; }
 
     void update_state_ts(int val) { state_ts = val; }
 
@@ -417,12 +431,12 @@ void simulation() {
             case READY: {
                 // must come from BLOCKED or CREATED
                 // add to runqueue (no event is generated)
+                proc->update_state_ts(CURRENT_TIME);
                 THE_SCHEDULER->add_process(proc);
                 CALL_SCHEDULER = true;
-                proc->update_state_ts(proc->io_burst);
                 if (vflag == true) {
                     printf("%d %d %d: %s -> %s\n", CURRENT_TIME, proc->pid,
-                           proc->state_ts, state_str[evt->oldState],
+                           timeInPrevState, state_str[evt->oldState],
                            state_str[evt->newState]);
                     // 0 0 0 : CREATED->READY
                 }
@@ -437,6 +451,7 @@ void simulation() {
             case RUNNG: {
                 // create event for either preemption or blocking
                 proc->get_cpu_burst();
+                proc->update_state_ts(CURRENT_TIME);
                 CURRENT_RUNNING_PROCESS = proc;
                 Event* new_evt;
                 if (proc->is_next_done()) {
@@ -449,7 +464,7 @@ void simulation() {
                 put_event(new_evt);
                 if (vflag == true) {
                     printf("%d %d %d: %s -> %s cb=%d rem=%d prio=%d\n",
-                           CURRENT_TIME, proc->pid, proc->state_ts,
+                           CURRENT_TIME, proc->pid, timeInPrevState,
                            state_str[evt->oldState], state_str[evt->newState],
                            proc->cpu_burst, proc->rem_time, proc->dynamic_prio);
                     // 0 0 0: READY -> RUNNG cb=8 rem=100 prio=1
@@ -460,7 +475,8 @@ void simulation() {
                 // create an event for when process becomes READY again
                 proc->get_io_burst();
                 proc->update_rem();
-                proc->update_state_ts(proc->cpu_burst);
+                proc->update_state_ts(CURRENT_TIME);
+                update_global_io(CURRENT_TIME, CURRENT_TIME + proc->io_burst);
                 CURRENT_RUNNING_PROCESS = nullptr;
                 Event* new_evt = new Event(CURRENT_TIME + proc->io_burst, proc,
                                            BLOCKED, READY);
@@ -468,7 +484,7 @@ void simulation() {
                 CALL_SCHEDULER = true;
                 if (vflag == true) {
                     printf("%d %d %d: %s -> %s  ib=%d rem=%d\n", CURRENT_TIME,
-                           proc->pid, proc->state_ts, state_str[evt->oldState],
+                           proc->pid, timeInPrevState, state_str[evt->oldState],
                            state_str[evt->newState], proc->io_burst,
                            proc->rem_time);
                     // 8 0 8: RUNNG -> BLOCK  ib=2 rem=92
@@ -477,13 +493,13 @@ void simulation() {
             }
             case DONE: {
                 proc->update_rem();
-                proc->update_state_ts(proc->cpu_burst);
+                proc->update_state_ts(CURRENT_TIME);
                 proc->set_ft_tt(CURRENT_TIME);
                 CURRENT_RUNNING_PROCESS = nullptr;
                 CALL_SCHEDULER = true;
                 if (vflag == true) {
                     printf("%d %d %d: Done\n", CURRENT_TIME, proc->pid,
-                           proc->state_ts);
+                           timeInPrevState);
                     // 201 0 5: Done
                 }
                 break;
@@ -503,7 +519,8 @@ void simulation() {
                     continue;
                 }
                 // create event to make this process runnable for same time.
-                CURRENT_RUNNING_PROCESS->update_state_ts(0);
+                CURRENT_RUNNING_PROCESS->update_cw(
+                    CURRENT_TIME - CURRENT_RUNNING_PROCESS->state_ts);
                 Event* new_event = new Event(
                     CURRENT_TIME, CURRENT_RUNNING_PROCESS, READY, RUNNG);
                 put_event(new_event);
@@ -518,18 +535,23 @@ void summary() {
         cout << " " << quantum;
     }
     cout << endl;
-    int finishtime = 0;
+    int finishtime = 0, time_cpubusy = 0, total_tt = 0, total_cw = 0,
+        num_processes = process_order.size();
     for (Process* p : process_order) {
         finishtime = max(finishtime, p->ft);
+        time_cpubusy += p->tc;
+        total_tt += p->tt;
+        total_cw += p->cw;
         printf("%04d: %4d %4d %4d %4d %1d | %5d %5d %5d %5d\n", p->pid, p->at,
                p->tc, p->cb, p->io, p->static_prio, p->ft, p->tt, p->it, p->cw);
     }
-    int time_cpubusy, time_iobusy, num_processes;
     double cpu_util = 100.0 * (time_cpubusy / (double)finishtime);
     double io_util = 100.0 * (time_iobusy / (double)finishtime);
     double throughput = 100.0 * (num_processes / (double)finishtime);
+    double avg_tt = total_tt / (double)num_processes;
+    double avg_cw = total_cw / (double)num_processes;
     printf("SUM: %d %.2lf %.2lf %.2lf %.2lf %.3lf\n", finishtime, cpu_util,
-           io_util, 0.0, 0.0, throughput);
+           io_util, avg_tt, avg_cw, throughput);
 }
 
 int main(int argc, char** argv) {
