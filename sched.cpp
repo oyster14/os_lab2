@@ -129,7 +129,7 @@ class Process {
 
     void get_io_burst() {
         io_burst = myrandom(io);
-        it += io_burst;  // seems to need revise
+        it += io_burst;
     }
 
     void update_rem(int val) { rem_time -= val; }
@@ -307,49 +307,16 @@ class SRTF : public Scheduler {
     list<Process*>::iterator it;
 };
 
-class RR : public Scheduler {
-   public:
-    void add_process(Process* p) { runqueue.emplace(p); };
-
-    Process* get_next_process() {
-        if (runqueue.empty()) {
-            return nullptr;
-        }
-        Process* proc = runqueue.front();
-        runqueue.pop();
-        return proc;
-    };
-
-   private:
-    queue<Process*> runqueue;
-};
-
 class PRIO : public Scheduler {
    public:
-    void add_process(Process* p) { runqueue.emplace(p); };
-
-    Process* get_next_process() {
-        if (runqueue.empty()) {
-            return nullptr;
-        }
-        Process* proc = runqueue.front();
-        runqueue.pop();
-        return proc;
-    };
-    ;
-
-   private:
-    queue<Process*> runqueue;
-};
-
-class PREPRIO : public Scheduler {
-   public:
-    PREPRIO() {
+    PRIO() {
         activeQ = new queue<Process*>[maxprio];
         expiredQ = new queue<Process*>[maxprio];
+        AQbitmap = 0;
+        EQbitmap = 0;
     }
 
-    ~PREPRIO() {
+    ~PRIO() {
         delete activeQ;
         activeQ = nullptr;
         delete expiredQ;
@@ -357,28 +324,38 @@ class PREPRIO : public Scheduler {
     }
 
     void add_process(Process* p) {
-        // need to change
         if (p->dynamic_prio < 0) {
             p->reset_dynamic_prio();
             expiredQ[p->dynamic_prio].emplace(p);
+            EQbitmap |= 1 << p->dynamic_prio;
         } else {
             activeQ[p->dynamic_prio].emplace(p);
+            AQbitmap |= 1 << p->dynamic_prio;
         }
     };
 
     Process* get_next_process() {
-        // need to change
-        if (activeQ[0].empty()) {
+        if (AQbitmap == 0) {
             swap(activeQ, expiredQ);
+            swap(AQbitmap, EQbitmap);
+            if (AQbitmap == 0) {
+                return nullptr;
+            }
         }
-        Process* proc = activeQ[maxprio - 1].front();
-        activeQ[maxprio - 1].pop();
+        int pos = 63 - __builtin_clzll(AQbitmap);
+        Process* proc = activeQ[pos].front();
+        activeQ[pos].pop();
+        if (activeQ[pos].empty()) {
+            AQbitmap &= ~(1 << pos);
+        }
         return proc;
     };
 
    private:
     queue<Process*>* activeQ;
     queue<Process*>* expiredQ;
+    unsigned long long AQbitmap;  // support max 64 prio level
+    unsigned long long EQbitmap;
 };
 
 Scheduler* THE_SCHEDULER = nullptr;
@@ -386,6 +363,7 @@ Scheduler* THE_SCHEDULER = nullptr;
 void init_scheduler() {
     switch (sched_type) {
         case 'F':
+        case 'R':
             THE_SCHEDULER = new FCFS();
             break;
         case 'L':
@@ -394,14 +372,9 @@ void init_scheduler() {
         case 'S':
             THE_SCHEDULER = new SRTF();
             break;
-        case 'R':
-            THE_SCHEDULER = new RR();
-            break;
         case 'P':
-            THE_SCHEDULER = new PRIO();
-            break;
         case 'E':
-            THE_SCHEDULER = new PREPRIO();
+            THE_SCHEDULER = new PRIO();
             break;
         default:
             cout << "Unknown Scheduler spec : -v { FLSRPE }" << endl;
@@ -445,8 +418,6 @@ void simulation() {
                 proc->update_state_ts(CURRENT_TIME);
                 proc->update_cpu_burst(timeInPrevState);
                 proc->update_rem(timeInPrevState);
-                THE_SCHEDULER->add_process(proc);
-                CALL_SCHEDULER = true;
                 if (vflag == true) {
                     printf("%d %d %d: %s -> %s  cb=%d rem=%d prio=%d\n",
                            CURRENT_TIME, proc->pid, timeInPrevState,
@@ -454,6 +425,12 @@ void simulation() {
                            proc->cpu_burst, proc->rem_time, proc->dynamic_prio);
                     // 2 0 2: RUNNG -> READY  cb=6 rem=98 prio=1
                 }
+                proc->update_dynamic_prio();
+                if (sched_type == 'R') {
+                    proc->reset_dynamic_prio();
+                }
+                THE_SCHEDULER->add_process(proc);
+                CALL_SCHEDULER = true;
                 break;
             }
             case RUNNG: {
@@ -490,6 +467,7 @@ void simulation() {
                 proc->update_cpu_burst(timeInPrevState);
                 proc->update_rem(timeInPrevState);
                 proc->update_state_ts(CURRENT_TIME);
+                proc->reset_dynamic_prio();
                 update_global_io(CURRENT_TIME, CURRENT_TIME + proc->io_burst);
                 CURRENT_RUNNING_PROCESS = nullptr;
                 Event* new_evt = new Event(CURRENT_TIME + proc->io_burst, proc,
