@@ -1,0 +1,66 @@
+1 0 0: CREATED -> READY
+1 1 0: CREATED -> READY
+1 2 0: CREATED -> READY
+1 2 0: READY -> RUNNG cb=10 rem=20 prio=6
+4 2 3: RUNNG -> READY  cb=7 rem=17 prio=6
+4 2 0: READY -> RUNNG cb=7 rem=17 prio=5
+7 2 3: RUNNG -> READY  cb=4 rem=14 prio=5
+7 0 6: READY -> RUNNG cb=2 rem=20 prio=4
+9 0 2: RUNNG -> BLOCK  ib=7 rem=18
+9 2 2: READY -> RUNNG cb=4 rem=14 prio=4
+12 2 3: RUNNG -> READY  cb=1 rem=11 prio=4
+12 2 0: READY -> RUNNG cb=1 rem=11 prio=3
+13 2 1: RUNNG -> BLOCK  ib=62 rem=10
+13 1 12: READY -> RUNNG cb=8 rem=20 prio=2
+16 0 7: BLOCK -> READY
+    --> PrioPreempt Cond1=1 Cond2=0 (0) --> NO
+16 1 3: RUNNG -> READY  cb=5 rem=17 prio=2
+16 0 0: READY -> RUNNG cb=5 rem=18 prio=4
+19 0 3: RUNNG -> READY  cb=2 rem=15 prio=4
+19 0 0: READY -> RUNNG cb=2 rem=15 prio=3
+21 0 2: RUNNG -> BLOCK  ib=89 rem=13
+21 1 5: READY -> RUNNG cb=5 rem=17 prio=1
+24 1 3: RUNNG -> READY  cb=2 rem=14 prio=1
+24 1 0: READY -> RUNNG cb=2 rem=14 prio=0
+26 1 2: RUNNG -> BLOCK  ib=90 rem=12
+75 2 62: BLOCK -> READY
+75 2 0: READY -> RUNNG cb=4 rem=10 prio=6
+78 2 3: RUNNG -> READY  cb=1 rem=7 prio=6
+78 2 0: READY -> RUNNG cb=1 rem=7 prio=5
+79 2 1: RUNNG -> BLOCK  ib=51 rem=6
+110 0 89: BLOCK -> READY
+110 0 0: READY -> RUNNG cb=2 rem=13 prio=4
+112 0 2: RUNNG -> BLOCK  ib=74 rem=11
+116 1 90: BLOCK -> READY
+116 1 0: READY -> RUNNG cb=9 rem=12 prio=2
+119 1 3: RUNNG -> READY  cb=6 rem=9 prio=2
+119 1 0: READY -> RUNNG cb=6 rem=9 prio=1
+122 1 3: RUNNG -> READY  cb=3 rem=6 prio=1
+122 1 0: READY -> RUNNG cb=3 rem=6 prio=0
+125 1 3: RUNNG -> BLOCK  ib=42 rem=3
+130 2 51: BLOCK -> READY
+130 2 0: READY -> RUNNG cb=5 rem=6 prio=6
+133 2 3: RUNNG -> READY  cb=2 rem=3 prio=6
+133 2 0: READY -> RUNNG cb=2 rem=3 prio=5
+135 2 2: RUNNG -> BLOCK  ib=89 rem=1
+167 1 42: BLOCK -> READY
+167 1 0: READY -> RUNNG cb=3 rem=3 prio=2
+170 1 3: Done
+186 0 74: BLOCK -> READY
+186 0 0: READY -> RUNNG cb=9 rem=11 prio=4
+189 0 3: RUNNG -> READY  cb=6 rem=8 prio=4
+189 0 0: READY -> RUNNG cb=6 rem=8 prio=3
+192 0 3: RUNNG -> READY  cb=3 rem=5 prio=3
+192 0 0: READY -> RUNNG cb=3 rem=5 prio=2
+195 0 3: RUNNG -> BLOCK  ib=55 rem=2
+224 2 89: BLOCK -> READY
+224 2 0: READY -> RUNNG cb=1 rem=1 prio=6
+225 2 1: Done
+250 0 55: BLOCK -> READY
+250 0 0: READY -> RUNNG cb=2 rem=2 prio=4
+252 0 2: Done
+PREPRIO 3
+0000:    1   20   10   90 5 |   252   251   225     6
+0001:    1   20   10   90 3 |   170   169   132    17
+0002:    1   20   10   90 7 |   225   224   202     2
+SUM: 252 23.81 95.63 214.67 8.33 1.190

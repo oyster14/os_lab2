@@ -20,6 +20,7 @@ bool iflag = false;
 typedef enum { CREATED, READY, RUNNG, PREEMPT, BLOCKED, DONE } process_state;
 const static char* state_str[] = {"CREATED", "READY", "RUNNG",
                                   "PREEMPT", "BLOCK", "DONE"};
+const static char* no_yes_str[] = {"NO", "YES"};
 
 const static unordered_map<char, string> shed_name = {
     {'F', "FCFS"}, {'L', "LCFS"}, {'S', "SRTF"},
@@ -147,9 +148,7 @@ class Process {
 
     void update_dynamic_prio() { dynamic_prio--; }
 
-    void reset_dynamic_prio() {
-        dynamic_prio = static_prio - 1;
-    }  // When a process returns from I/O
+    void reset_dynamic_prio() { dynamic_prio = static_prio - 1; }
 
     bool is_next_done() { return rem_time == cpu_burst; }
 };
@@ -181,6 +180,7 @@ class Event {
 };
 
 list<Event*> eventsQ;
+list<Event*>::iterator it;
 
 void init_events(string& ifile_name) {
     ifstream ifile;
@@ -201,7 +201,6 @@ void init_events(string& ifile_name) {
 
 void showEventQ() {
     cout << "ShowEventQ: ";
-    list<Event*>::iterator it;
     for (it = eventsQ.begin(); it != eventsQ.end(); it++) {
         cout << (*it)->evtTimeStamp << ":" << (*it)->evtProcess->pid << " ";
     }
@@ -218,7 +217,7 @@ Event* get_event() {
 };
 
 void put_event(Event* evt) {
-    list<Event*>::iterator it = eventsQ.begin();
+    it = eventsQ.begin();
     while (it != eventsQ.end() && evt->evtTimeStamp >= (*it)->evtTimeStamp) {
         it++;
     }
@@ -232,9 +231,15 @@ int get_next_event_time() {
     return eventsQ.front()->evtTimeStamp;
 };
 
-void rm_event(){
+int is_pending_event_in_future(int curr_time, int pid) {
+    it = eventsQ.begin();
+    while (it != eventsQ.end() && (*it)->evtProcess->pid != pid) {
+        it++;
+    }
+    return (*it)->evtTimeStamp - curr_time;
+}
 
-};
+void rm_event() { eventsQ.erase(it); };
 
 // --- end --- DES ---
 
@@ -327,10 +332,10 @@ class PRIO : public Scheduler {
         if (p->dynamic_prio < 0) {
             p->reset_dynamic_prio();
             expiredQ[p->dynamic_prio].emplace(p);
-            EQbitmap |= 1 << p->dynamic_prio;
+            EQbitmap |= (1ull << p->dynamic_prio);
         } else {
             activeQ[p->dynamic_prio].emplace(p);
-            AQbitmap |= 1 << p->dynamic_prio;
+            AQbitmap |= (1ull << p->dynamic_prio);
         }
     };
 
@@ -346,7 +351,7 @@ class PRIO : public Scheduler {
         Process* proc = activeQ[pos].front();
         activeQ[pos].pop();
         if (activeQ[pos].empty()) {
-            AQbitmap &= ~(1 << pos);
+            AQbitmap &= ~(1ull << pos);
         }
         return proc;
     };
@@ -398,8 +403,6 @@ void simulation() {
         int timeInPrevState = CURRENT_TIME - proc->state_ts;
         switch (transition) {
             case READY: {
-                // must come from BLOCKED or CREATED
-                // add to runqueue (no event is generated)
                 proc->update_state_ts(CURRENT_TIME);
                 THE_SCHEDULER->add_process(proc);
                 CALL_SCHEDULER = true;
@@ -409,11 +412,30 @@ void simulation() {
                            state_str[evt->newState]);
                     // 0 0 0 : CREATED->READY
                 }
+                if (THE_SCHEDULER->does_preempt() &&
+                    CURRENT_RUNNING_PROCESS != nullptr) {
+                    int time_diff = is_pending_event_in_future(
+                        CURRENT_TIME, CURRENT_RUNNING_PROCESS->pid);
+                    bool cond1 = proc->dynamic_prio >
+                                 CURRENT_RUNNING_PROCESS->dynamic_prio;
+                    bool cond2 = time_diff > 0;
+                    if (cond1 && cond2) {
+                        rm_event();
+                        Event* new_event =
+                            new Event(CURRENT_TIME, CURRENT_RUNNING_PROCESS,
+                                      RUNNG, PREEMPT);
+                        put_event(new_event);
+                    }
+                    if (pflag == true) {
+                        printf(
+                            "    --> PrioPreempt Cond1=%d Cond2=%d (%d) --> "
+                            "%s\n",
+                            cond1, cond2, time_diff, no_yes_str[cond1 & cond2]);
+                    }
+                }
                 break;
             }
             case PREEMPT: {
-                // must come from RUNNING (preemption)
-                // add to runqueue (no event is generated)
                 CURRENT_RUNNING_PROCESS = nullptr;
                 proc->update_state_ts(CURRENT_TIME);
                 proc->update_cpu_burst(timeInPrevState);
@@ -434,7 +456,6 @@ void simulation() {
                 break;
             }
             case RUNNG: {
-                // create event for either preemption or blocking
                 proc->update_state_ts(CURRENT_TIME);
                 CURRENT_RUNNING_PROCESS = proc;
                 proc->get_cpu_burst();
@@ -462,7 +483,6 @@ void simulation() {
                 break;
             }
             case BLOCKED: {
-                // create an event for when process becomes READY again
                 proc->get_io_burst();
                 proc->update_cpu_burst(timeInPrevState);
                 proc->update_rem(timeInPrevState);
@@ -582,7 +602,7 @@ int main(int argc, char** argv) {
                         exit(1);
                     }
                     sscanf(optarg, "%c%d:%d", &sched_type, &quantum, &maxprio);
-                    // other checks needed to be done
+                    // need other checks
                 }
                 break;
             case '?':
