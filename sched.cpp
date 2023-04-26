@@ -252,6 +252,8 @@ class Scheduler {
     virtual Process* get_next_process() = 0;
 
     bool does_preempt() { return sched_type == 'E'; };
+
+    virtual ~Scheduler() {}
 };
 
 class FCFS : public Scheduler {
@@ -322,9 +324,9 @@ class PRIO : public Scheduler {
     }
 
     ~PRIO() {
-        delete activeQ;
+        delete[] activeQ;
         activeQ = nullptr;
-        delete expiredQ;
+        delete[] expiredQ;
         expiredQ = nullptr;
     }
 
